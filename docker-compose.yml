@@ -34,7 +34,7 @@ services:
   # STEP 2: COFFEENCHILL FUNCTIONS CONTAINER
   # ============================================================
   functions:
-    image: babyade/coffeenchill-functions:v2.0
+    image: babyade/coffeenchill-functions:v2.1
 
     ports:
       - "7071:80"
