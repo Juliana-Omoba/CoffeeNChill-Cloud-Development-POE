@@ -1,0 +1,108 @@
+name: CoffeeNChill CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - feature/part3-api-gateway
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-publish:
+    name: Build, Test and Publish Docker Images
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore solution
+        run: dotnet restore CoffeeNChill.sln
+
+      - name: Build solution
+        run: dotnet build CoffeeNChill.sln --configuration Release --no-restore
+
+      - name: Run automated tests
+        run: dotnet test CoffeeNChill.Tests/CoffeeNChill.Tests.csproj --configuration Release --no-build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push API Gateway image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./CoffeeNChill.ApiGateway
+          file: ./CoffeeNChill.ApiGateway/Dockerfile
+          push: true
+          tags: babyade/coffeenchill-functions:gateway-${{ github.sha }}
+
+      - name: Build and push Azure Functions image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./CoffeeNChill.Functions
+          file: ./CoffeeNChill.Functions/Dockerfile
+          push: true
+          tags: babyade/coffeenchill-functions:functions-${{ github.sha }}
+
+
+
+  deploy-oracle:
+    name: Deploy to Oracle Cloud
+    runs-on: ubuntu-latest
+    needs: build-test-publish
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - name: Configure secure SSH access
+        env:
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+          OCI_SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          OCI_SSH_HOST_KEY: ${{ secrets.OCI_SSH_HOST_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$OCI_SSH_PRIVATE_KEY" > ~/.ssh/oci_deploy_key
+          chmod 600 ~/.ssh/oci_deploy_key
+          printf '%s\n' "$OCI_SSH_HOST_KEY" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy Gateway and Functions
+        env:
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+          OCI_USERNAME: ${{ secrets.OCI_USERNAME }}
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          ssh -i ~/.ssh/oci_deploy_key \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o IdentitiesOnly=yes \
+            "$OCI_USERNAME@$OCI_HOST" \
+            "IMAGE_SHA='$IMAGE_SHA' bash -se" <<'REMOTE'
+          set -e
+          cd /home/opc/coffeenchill-deployment
+
+          export FUNCTIONS_IMAGE="babyade/coffeenchill-functions:functions-${IMAGE_SHA}"
+          export GATEWAY_IMAGE="babyade/coffeenchill-functions:gateway-${IMAGE_SHA}"
+
+          docker compose config --quiet
+          docker compose pull gateway functions
+          docker compose up -d --no-deps gateway functions
+          docker compose ps
+          REMOTE
+
+

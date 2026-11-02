@@ -1,3 +1,4 @@
+
 services:
 
   # ============================================================
@@ -7,21 +8,26 @@ services:
     image: mcr.microsoft.com/azure-storage/azurite
 
     command:
-      - "azurite"
-      - "--blobHost"
+      - azurite
+      - --blobHost
       - "0.0.0.0"
-      - "--queueHost"
+      - --queueHost
       - "0.0.0.0"
-      - "--tableHost"
+      - --tableHost
       - "0.0.0.0"
-      - "--location"
-      - "/data"
-      - "--skipApiVersionCheck"
+      - --location
+      - /data
+      - --skipApiVersionCheck
+
+    #ports:
+      #- "127.0.0.1:10000:10000"
+      #- "127.0.0.1:10001:10001"
+      #- "127.0.0.1:10002:10002"
 
     ports:
-      - "10000:10000"
-      - "10001:10001"
-      - "10002:10002"
+      - "127.0.0.1:11000:10000"
+      - "127.0.0.1:11001:10001"
+      - "127.0.0.1:11002:10002"
 
     volumes:
       - azurite-data:/data
@@ -29,20 +35,18 @@ services:
     networks:
       - coffeenchill-network
 
+    restart: unless-stopped
+
 
   # ============================================================
-  # STEP 2: COFFEENCHILL FUNCTIONS CONTAINER
+  # STEP 2: AZURE FUNCTIONS
   # ============================================================
   functions:
-    image: babyade/coffeenchill-functions:v2.1
-
-    ports:
-      - "7071:80"
+    image: babyade/coffeenchill-functions:v4.0
 
     environment:
-      AzureWebJobsStorage: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;TableEndpoint=http://azurite:10002/devstoreaccount1;"
+      AzureWebJobsStorage: "${AZURITE_CONNECTION_STRING}"
       FUNCTIONS_WORKER_RUNTIME: "dotnet-isolated"
-      
 
     depends_on:
       - azurite
@@ -50,9 +54,42 @@ services:
     networks:
       - coffeenchill-network
 
+    restart: unless-stopped
+
+
+  # ============================================================
+  # STEP 3: API GATEWAY
+  # ============================================================
+  gateway:
+    image: babyade/coffeenchill-functions:v4.1
+
+    ports:
+      - "127.0.0.1:5000:8080"
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Development"
+      ASPNETCORE_HTTP_PORTS: "8080"
+
+      Functions__BaseUrl: "http://functions:80/"
+
+      ConnectionStrings__AzureStorage: "${AZURITE_CONNECTION_STRING}"
+
+      Jwt__Key: "${JWT_KEY}"
+      Jwt__Issuer: "${JWT_ISSUER}"
+      Jwt__Audience: "${JWT_AUDIENCE}"
+      Jwt__ExpiryMinutes: "60"
+
+    depends_on:
+      - functions
+
+    networks:
+      - coffeenchill-network
+
+    restart: unless-stopped
+
 
 # ==============================================================
-# STEP 3: CUSTOM DOCKER NETWORK
+# STEP 4: CUSTOM DOCKER NETWORK
 # ==============================================================
 networks:
   coffeenchill-network:
@@ -60,7 +97,7 @@ networks:
 
 
 # ==============================================================
-# STEP 4: PERSISTENT AZURITE VOLUME
+# STEP 5: PERSISTENT AZURITE VOLUME
 # ==============================================================
 volumes:
   azurite-data:
