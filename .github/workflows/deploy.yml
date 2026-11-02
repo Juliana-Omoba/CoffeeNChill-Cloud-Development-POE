@@ -58,3 +58,51 @@ jobs:
           push: true
           tags: babyade/coffeenchill-functions:functions-${{ github.sha }}
 
+
+
+  deploy-oracle:
+    name: Deploy to Oracle Cloud
+    runs-on: ubuntu-latest
+    needs: build-test-publish
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - name: Configure secure SSH access
+        env:
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+          OCI_SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          OCI_SSH_HOST_KEY: ${{ secrets.OCI_SSH_HOST_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$OCI_SSH_PRIVATE_KEY" > ~/.ssh/oci_deploy_key
+          chmod 600 ~/.ssh/oci_deploy_key
+          printf '%s\n' "$OCI_SSH_HOST_KEY" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy Gateway and Functions
+        env:
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+          OCI_USERNAME: ${{ secrets.OCI_USERNAME }}
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          ssh -i ~/.ssh/oci_deploy_key \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o IdentitiesOnly=yes \
+            "$OCI_USERNAME@$OCI_HOST" \
+            "IMAGE_SHA='$IMAGE_SHA' bash -se" <<'REMOTE'
+          set -e
+          cd /home/opc/coffeenchill-deployment
+
+          export FUNCTIONS_IMAGE="babyade/coffeenchill-functions:functions-${IMAGE_SHA}"
+          export GATEWAY_IMAGE="babyade/coffeenchill-functions:gateway-${IMAGE_SHA}"
+
+          docker compose config --quiet
+          docker compose pull gateway functions
+          docker compose up -d --no-deps gateway functions
+          docker compose ps
+          REMOTE
+
+
