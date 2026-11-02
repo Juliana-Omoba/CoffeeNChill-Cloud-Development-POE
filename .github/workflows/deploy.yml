@@ -1,0 +1,60 @@
+name: CoffeeNChill CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - feature/part3-api-gateway
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-publish:
+    name: Build, Test and Publish Docker Images
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore solution
+        run: dotnet restore CoffeeNChill.sln
+
+      - name: Build solution
+        run: dotnet build CoffeeNChill.sln --configuration Release --no-restore
+
+      - name: Run automated tests
+        run: dotnet test CoffeeNChill.Tests/CoffeeNChill.Tests.csproj --configuration Release --no-build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push API Gateway image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./CoffeeNChill.ApiGateway
+          file: ./CoffeeNChill.ApiGateway/Dockerfile
+          push: true
+          tags: babyade/coffeenchill-functions:gateway-${{ github.sha }}
+
+      - name: Build and push Azure Functions image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./CoffeeNChill.Functions
+          file: ./CoffeeNChill.Functions/Dockerfile
+          push: true
+          tags: babyade/coffeenchill-functions:functions-${{ github.sha }}
+

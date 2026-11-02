@@ -43,3 +43,14 @@ Thumbs.db
 .env
 .env.*
 secrets.json
+# Azurite backup archives
+azurite-backup.tar.gz
+*.tar.gz
+
+# Python generated files
+__pycache__/
+*.pyc
+
+# Local database and storage backups
+*.bak
+*.backup

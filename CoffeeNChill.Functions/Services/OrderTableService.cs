@@ -1,20 +1,43 @@
-﻿using Azure;
+﻿
+using Azure;
 using Azure.Data.Tables;
 using CoffeeNChill.Functions.Interfaces;
 using CoffeeNChill.Functions.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace CoffeeNChill.Functions.Services
 {
+    // ============================================================
+    // POE PART 2 + PART 3:
+    // AZURE TABLE STORAGE ORDER SERVICE
+    // ============================================================
+    //
+    // Stores and retrieves orders using Azure Table Storage.
+    //
+    // Table name: Orders
+    //
+    // PartitionKey = OrderDate (yyyy-MM-dd)
+    // RowKey       = OrderId
+    //
+    // Existing Part 2 operations remain unchanged.
+    // New Part 3 retrieval operations are added below.
+    // ============================================================
+
     public class OrderTableService : IOrderTableService
     {
         private const string TableName = "Orders";
 
         private readonly TableClient _tableClient;
+
         private readonly ILogger<OrderTableService> _logger;
+
+        // ========================================================
+        // STEP 1: CONSTRUCTOR
+        // ========================================================
 
         public OrderTableService(
             IConfiguration configuration,
@@ -31,6 +54,10 @@ namespace CoffeeNChill.Functions.Services
                 connectionString,
                 TableName);
         }
+
+        // ========================================================
+        // EXISTING PART 2: CREATE ORDER
+        // ========================================================
 
         public async Task CreateOrderAsync(OrderEntity order)
         {
@@ -60,6 +87,10 @@ namespace CoffeeNChill.Functions.Services
             }
         }
 
+        // ========================================================
+        // EXISTING PART 2: UPDATE ORDER STATUS
+        // ========================================================
+
         public async Task UpdateOrderStatusAsync(
             string partitionKey,
             string orderId,
@@ -67,17 +98,14 @@ namespace CoffeeNChill.Functions.Services
         {
             try
             {
-
                 // Locate the existing order using the required
                 // PartitionKey + RowKey combination.
-
                 Response<OrderEntity> response =
                     await _tableClient.GetEntityAsync<OrderEntity>(
                         partitionKey,
                         orderId);
 
                 OrderEntity entity = response.Value;
-
 
                 // RUBRIC: Order lifecycle status management.
                 entity.Status = status;
@@ -100,6 +128,108 @@ namespace CoffeeNChill.Functions.Services
                     "Failed to update order {OrderId} to status {Status}.",
                     orderId,
                     status);
+
+                throw;
+            }
+        }
+
+        // ========================================================
+        // NEW PART 3: RETRIEVE ALL ORDERS
+        // ========================================================
+        //
+        // Retrieves orders stored in the Orders table.
+        //
+        // Results are ordered by newest OrderTimestamp first.
+        //
+        // This method does not change order records.
+        // ========================================================
+
+        public async Task<List<OrderEntity>> GetAllOrdersAsync()
+        {
+            try
+            {
+                // Ensure the table exists before querying.
+                await _tableClient.CreateIfNotExistsAsync();
+
+                var orders = new List<OrderEntity>();
+
+                // Azure Table Storage returns query results
+                // asynchronously, potentially across pages.
+                await foreach (
+                    OrderEntity order in
+                    _tableClient.QueryAsync<OrderEntity>())
+                {
+                    orders.Add(order);
+                }
+
+                // Display the newest orders first.
+                orders.Sort((first, second) =>
+                    second.OrderTimestamp.CompareTo(
+                        first.OrderTimestamp));
+
+                _logger.LogInformation(
+                    "Retrieved {Count} orders from Azure Table Storage.",
+                    orders.Count);
+
+                return orders;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Failed to retrieve orders from Azure Table Storage.");
+
+                throw;
+            }
+        }
+
+        // ========================================================
+        // NEW PART 3: RETRIEVE ONE ORDER
+        // ========================================================
+        //
+        // Uses the exact Azure Table Storage keys:
+        //
+        // PartitionKey = order date
+        // RowKey       = order ID
+        //
+        // Returns null when the order does not exist.
+        // ========================================================
+
+        public async Task<OrderEntity?> GetOrderAsync(
+            string partitionKey,
+            string orderId)
+        {
+            // Reject missing storage keys.
+            if (string.IsNullOrWhiteSpace(partitionKey) ||
+                string.IsNullOrWhiteSpace(orderId))
+            {
+                return null;
+            }
+
+            try
+            {
+                await _tableClient.CreateIfNotExistsAsync();
+
+                Response<OrderEntity> response =
+                    await _tableClient.GetEntityAsync<OrderEntity>(
+                        partitionKey,
+                        orderId);
+
+                return response.Value;
+            }
+            catch (RequestFailedException ex)
+                when (ex.Status == 404)
+            {
+                // The requested order was not found.
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Failed to retrieve order {OrderId} for date {OrderDate}.",
+                    orderId,
+                    partitionKey);
 
                 throw;
             }

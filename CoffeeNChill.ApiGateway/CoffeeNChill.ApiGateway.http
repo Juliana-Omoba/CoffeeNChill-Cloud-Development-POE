@@ -1,0 +1,6 @@
+@CoffeeNChill.ApiGateway_HostAddress = http://localhost:5010
+
+GET {{CoffeeNChill.ApiGateway_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
